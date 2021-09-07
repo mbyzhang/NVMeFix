@@ -27,19 +27,19 @@ bool NVMeFixPlugin::enableAPST(ControllerEntry& entry, const NVMe::nvme_id_ctrl*
 		DBGLOG(Log::APST, "APST status %d", entry.apste);
 #endif
 
-	if (entry.apstAllowed()) {
-		DBGLOG("apst", "Configuring APST");
-		auto res = configureAPST(entry, ctrl);
-		if (res != kIOReturnSuccess) {
-			DBGLOG("nvmef", "Failed to configure APST with 0x%x", res);
-			entry.apste = false;
-		} else /* Assume we turn APST on without double checking in RELEASE builds */
-			entry.apste = true;
-	} else
-		DBGLOG(Log::APST, "Not configuring APST (it is already enabled or quirks prohibit it)");
+	DBGLOG("apst", "Configuring APST");
+	auto res = configureAPST(entry, ctrl);
+	if (res != kIOReturnSuccess) {
+		DBGLOG("nvmef", "Failed to configure APST with 0x%x", res);
+	}
+
+	auto ret = APSTenabled(entry, entry.apste);
+	if (ret != kIOReturnSuccess) {
+		DBGLOG(Log::APST, "Failed to get APST status");
+	}
 
 #ifdef DEBUG
-	if (APSTenabled(entry, entry.apste) == kIOReturnSuccess) {
+	if (ret == kIOReturnSuccess) {
 		DBGLOG(Log::APST, "APST status %d", entry.apste);
 	}
 	if (entry.apste && dumpAPST(entry, ctrl->npss))
@@ -76,6 +76,14 @@ IOReturn NVMeFixPlugin::configureAPST(ControllerEntry& entry, const NVMe::nvme_i
 	auto apstTable = reinterpret_cast<NVMe::nvme_feat_auto_pst*>(apstDesc->getBytesNoCopy());
 	int max_ps {-1};
 
+	uint32_t apste {1};
+
+	if (!entry.apstAllowed()) {
+		DBGLOG(Log::APST, "Disabling APST");
+		apste = 0;
+		goto done;
+	}
+	
 	if (apstTable) {
 		memset(apstTable, '\0', sizeof(*apstTable));
 
@@ -139,9 +147,9 @@ IOReturn NVMeFixPlugin::configureAPST(ControllerEntry& entry, const NVMe::nvme_i
 	} else
 		SYSLOG(Log::APST, "Failed to get table buffer");
 
-	if (max_ps != -1) {
-		uint32_t dword11 {1};
-		ret = NVMeFeatures(entry, NVMe::NVME_FEAT_AUTO_PST, &dword11, apstDesc, nullptr, true);
+done:
+	if (max_ps != -1 || !apste) {
+		ret = NVMeFeatures(entry, NVMe::NVME_FEAT_AUTO_PST, &apste, apstDesc, nullptr, true);
 	}
 
 	if (apstDesc)
